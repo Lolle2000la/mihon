@@ -11,6 +11,8 @@ import tachiyomi.data.UpdateStrategyColumnAdapter
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.model.ChapterUpdate
+import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.manga.interactor.FetchInterval
 import tachiyomi.domain.manga.interactor.GetMangaByUrlAndSourceId
 import tachiyomi.domain.manga.model.Manga
@@ -31,6 +33,7 @@ class MangaRestorer(
     private val updateManga: UpdateManga = Injekt.get(),
     private val getTracks: GetTracks = Injekt.get(),
     private val insertTrack: InsertTrack = Injekt.get(),
+    private val chapterRepository: ChapterRepository = Injekt.get(),
     fetchInterval: FetchInterval = Injekt.get(),
 ) {
 
@@ -181,45 +184,29 @@ class MangaRestorer(
             }
             .partition { it.id > 0 }
 
-        handler.await(inTransaction = true) {
-            if (newChapters.isNotEmpty()) {
-                newChapters.forEach { chapter ->
-                    chaptersQueries.insert(
-                        chapter.mangaId,
-                        chapter.url,
-                        chapter.name,
-                        chapter.scanlator,
-                        chapter.read,
-                        chapter.bookmark,
-                        chapter.lastPageRead,
-                        chapter.chapterNumber,
-                        chapter.sourceOrder,
-                        chapter.dateFetch,
-                        chapter.dateUpload,
-                        chapter.version,
-                    )
-                }
+        // Use bulk operations for better performance
+        if (newChapters.isNotEmpty()) {
+            chapterRepository.addAll(newChapters)
+        }
+        if (existingChapters.isNotEmpty()) {
+            val chapterUpdates = existingChapters.map { chapter ->
+                ChapterUpdate(
+                    id = chapter.id,
+                    mangaId = null,
+                    url = null,
+                    name = null,
+                    scanlator = null,
+                    read = chapter.read,
+                    bookmark = chapter.bookmark,
+                    lastPageRead = chapter.lastPageRead,
+                    chapterNumber = null,
+                    sourceOrder = null,
+                    dateFetch = null,
+                    dateUpload = null,
+                    version = chapter.version,
+                )
             }
-            if (existingChapters.isNotEmpty()) {
-                existingChapters.forEach { chapter ->
-                    chaptersQueries.update(
-                        mangaId = null,
-                        url = null,
-                        name = null,
-                        scanlator = null,
-                        read = chapter.read,
-                        bookmark = chapter.bookmark,
-                        lastPageRead = chapter.lastPageRead,
-                        chapterNumber = null,
-                        sourceOrder = null,
-                        dateFetch = null,
-                        dateUpload = null,
-                        chapterId = chapter.id,
-                        version = chapter.version,
-                        isSyncing = 0,
-                    )
-                }
-            }
+            chapterRepository.updateAll(chapterUpdates)
         }
     }
 
@@ -305,6 +292,7 @@ class MangaRestorer(
         if (mangaCategoriesToUpdate.isNotEmpty()) {
             handler.await(true) {
                 mangas_categoriesQueries.deleteMangaCategoryByMangaId(manga.id)
+                // Bulk insert category associations
                 mangaCategoriesToUpdate.forEach { (mangaId, categoryId) ->
                     mangas_categoriesQueries.insert(mangaId, categoryId)
                 }
@@ -341,6 +329,7 @@ class MangaRestorer(
 
         if (toUpdate.isNotEmpty()) {
             handler.await(true) {
+                // Bulk upsert history records
                 toUpdate.forEach {
                     historyQueries.upsert(
                         it.chapterId,
@@ -383,6 +372,7 @@ class MangaRestorer(
             insertTrack.awaitAll(newTracks)
         }
         if (existingTracks.isNotEmpty()) {
+            // Bulk update existing tracks
             handler.await(true) {
                 existingTracks.forEach { track ->
                     manga_syncQueries.update(
@@ -421,7 +411,8 @@ class MangaRestorer(
         }
         val toInsert = excludedScanlators.filter { it !in existingExcludedScanlators }
         if (toInsert.isNotEmpty()) {
-            handler.await {
+            handler.await(true) {
+                // Bulk insert excluded scanlators
                 toInsert.forEach {
                     excluded_scanlatorsQueries.insert(manga.id, it)
                 }
