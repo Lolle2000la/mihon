@@ -134,22 +134,27 @@ class BackupRestorer(
         backupCategories: List<BackupCategory>,
     ) = launch(dispatcher) {
         val sortedMangas = mangaRestorer.sortByNew(backupMangas)
-        sortedMangas.map {
-            async {
-                ensureActive()
-                try {
-                    mangaRestorer.restore(it, backupCategories)
-                } catch (e: Exception) {
-                    val sourceName = sourceMapping[it.source] ?: it.source.toString()
-                    errors.add(Date() to "${it.title} [$sourceName]: ${e.message}")
-                } finally {
-                    val currentProgress = restoreProgress.incrementAndGet()
-                    if (currentProgress == restoreAmount || currentProgress % MANGA_PROGRESS_BATCH == 0) {
-                        notifier.showRestoreProgress(it.title, currentProgress, restoreAmount, isSync)
+        
+        // Process manga in batches to avoid overwhelming the database with too many concurrent operations
+        val batchSize = maxOf(1, Runtime.getRuntime().availableProcessors() * 2)
+        sortedMangas.chunked(batchSize).forEach { batch ->
+            batch.map {
+                async {
+                    ensureActive()
+                    try {
+                        mangaRestorer.restore(it, backupCategories)
+                    } catch (e: Exception) {
+                        val sourceName = sourceMapping[it.source] ?: it.source.toString()
+                        errors.add(Date() to "${it.title} [$sourceName]: ${e.message}")
+                    } finally {
+                        val currentProgress = restoreProgress.incrementAndGet()
+                        if (currentProgress == restoreAmount || currentProgress % MANGA_PROGRESS_BATCH == 0) {
+                            notifier.showRestoreProgress(it.title, currentProgress, restoreAmount, isSync)
+                        }
                     }
                 }
-            }
-        }.awaitAll()
+            }.awaitAll()
+        }
 
         val finalProgress = restoreProgress.get()
         if (finalProgress < restoreAmount) {
@@ -192,24 +197,24 @@ class BackupRestorer(
     private fun CoroutineScope.restoreExtensionRepos(
         backupExtensionRepo: List<BackupExtensionRepos>,
     ) = launch(dispatcher) {
-        backupExtensionRepo
-            .forEach {
+        backupExtensionRepo.map { repo ->
+            async {
                 ensureActive()
-
                 try {
-                    extensionRepoRestorer(it)
+                    extensionRepoRestorer(repo)
                 } catch (e: Exception) {
-                    errors.add(Date() to "Error Adding Repo: ${it.name} : ${e.message}")
+                    errors.add(Date() to "Error Adding Repo: ${repo.name} : ${e.message}")
+                } finally {
+                    val currentProgress = restoreProgress.incrementAndGet()
+                    notifier.showRestoreProgress(
+                        context.stringResource(MR.strings.extensionRepo_settings),
+                        currentProgress,
+                        restoreAmount,
+                        isSync,
+                    )
                 }
-
-                restoreProgress.incrementAndGet()
-                notifier.showRestoreProgress(
-                    context.stringResource(MR.strings.extensionRepo_settings),
-                    restoreProgress.get(),
-                    restoreAmount,
-                    isSync,
-                )
             }
+        }.awaitAll()
     }
 
     private fun writeErrorLog(): File {
