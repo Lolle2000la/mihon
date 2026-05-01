@@ -4,10 +4,12 @@ import android.app.Application
 import androidx.core.content.ContextCompat
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import app.cash.sqldelight.db.SqlDriver
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConfiguration
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDriver
 import com.eygraber.sqldelight.androidx.driver.FileProvider
+import com.eygraber.sqldelight.androidx.driver.SqliteJournalMode
 import eu.kanade.domain.track.store.DelayedTrackingStore
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.cache.CoverCache
@@ -62,6 +64,8 @@ class AppModule(val app: Application) : InjektModule {
                     schema = Database.Schema,
                     configuration = AndroidxSqliteConfiguration(
                         isForeignKeyConstraintsEnabled = true,
+                        concurrencyModel = AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter(isWal = true),
+                        journalMode = SqliteJournalMode.WAL
                     ),
                 )
                     .also { sqlDriverRef = WeakReference(it) }
