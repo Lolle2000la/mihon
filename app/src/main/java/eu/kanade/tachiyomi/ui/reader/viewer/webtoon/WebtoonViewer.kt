@@ -203,16 +203,32 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
 
     /**
      * Called from the RecyclerView listener when a [page] is marked as active. It notifies the
-     * activity of the change and requests the preload of the next chapter if this is the last page.
+     * activity of the change and requests the preload of the adjacent chapters when near the
+     * beginning or end of the current chapter.
      */
     private fun onPageSelected(page: ReaderPage, allowPreload: Boolean) {
         val pages = page.chapter.pages ?: return
         logcat { "onPageSelected: ${page.number}/${pages.size}" }
         activity.onPageSelected(page)
 
+        if (!allowPreload || page.chapter != adapter.currentChapter) {
+            return
+        }
+
+        // Preload previous chapter once we're within the first 5 pages of the current chapter
+        val nearBeginning = page.number < 5
+        if (nearBeginning) {
+            val firstItem = adapter.items.firstOrNull()
+            val prevChapter = (firstItem as? ChapterTransition.Prev)?.to
+            if (prevChapter != null) {
+                logcat { "Request preload previous chapter because we're near the beginning (page ${page.number})" }
+                activity.requestPreloadChapter(prevChapter)
+            }
+        }
+
         // Preload next chapter once we're within the last 5 pages of the current chapter
-        val inPreloadRange = pages.size - page.number < 5
-        if (inPreloadRange && allowPreload && page.chapter == adapter.currentChapter) {
+        val nearEnd = pages.size - page.number < 5
+        if (nearEnd) {
             logcat { "Request preload next chapter because we're at page ${page.number} of ${pages.size}" }
             val nextItem = adapter.items.getOrNull(adapter.items.size - 1)
             val transitionChapter = (nextItem as? ChapterTransition.Next)?.to ?: (nextItem as?ReaderPage)?.chapter
